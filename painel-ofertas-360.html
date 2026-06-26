@@ -766,6 +766,7 @@
 
     const DATA_CONFIG = {
       backendUrl: "",
+      staticJsonUrl: "ofertas.json",
       mercadoLivreSearchUrl: "https://api.mercadolibre.com/sites/MLB/search",
       reviewEndpointTemplate: "https://api.mercadolibre.com/reviews/item/{id}",
       useDemoWhenApiFails: true,
@@ -938,6 +939,7 @@
       filteredProducts: [],
       isLoading: false,
       sourceMode: "pending",
+      sourceUpdatedAt: "",
       lastError: ""
     };
 
@@ -1001,30 +1003,36 @@
       setNotice("");
 
       try {
-        const rawProducts = await fetchOffers();
+        const offerResult = await fetchOffers();
+        const rawProducts = offerResult.products || [];
 
         if (!rawProducts.length) {
           throw new Error("A consulta não retornou produtos com dados suficientes.");
         }
 
         state.products = prepareProducts(rawProducts);
-        state.sourceMode = getConfiguredBackendUrl() ? "backend" : "live-api";
+        state.sourceMode = offerResult.sourceMode || "live-api";
+        state.sourceUpdatedAt = offerResult.generatedAt || "";
         state.lastError = "";
         populateCategoryFilter();
         applyFiltersAndRender();
         setSourceBadge(state.sourceMode);
-        updateTimestamp();
+        updateTimestamp(state.sourceUpdatedAt);
+        if (offerResult.message) {
+          setNotice(offerResult.message, offerResult.noticeType || "");
+        }
       } catch (error) {
         state.lastError = error.message || "Falha ao consultar ofertas.";
 
         if (DATA_CONFIG.useDemoWhenApiFails) {
           state.products = prepareProducts(DEMO_PRODUCTS.map((product) => ({ ...product, fonte: "demo" })));
           state.sourceMode = "demo";
+          state.sourceUpdatedAt = "";
           populateCategoryFilter();
           applyFiltersAndRender();
           setSourceBadge("demo");
           updateTimestamp();
-          setNotice("Consulta ao vivo indisponível neste navegador. Exibindo dados demonstrativos para validar o painel; em produção, conecte um backend seguro para retornar os produtos reais do Mercado Livre.", "warning");
+          setNotice("Fonte real indisponível no momento. Exibindo dados demonstrativos para manter o painel navegável; verifique a automação do ofertas.json ou configure um backend seguro.", "warning");
         } else {
           state.products = [];
           state.filteredProducts = [];
@@ -1040,15 +1048,64 @@
     async function fetchOffers() {
       const backendUrl = getConfiguredBackendUrl();
       if (backendUrl) {
-        return fetchBackendOffers(backendUrl);
+        return {
+          products: await fetchBackendOffers(backendUrl),
+          sourceMode: "backend"
+        };
       }
 
-      return fetchMercadoLivreOffers();
+      try {
+        const staticOffers = await fetchStaticOffersJson();
+        if (staticOffers.products.length) {
+          return staticOffers;
+        }
+      } catch (error) {
+        console.info("ofertas.json indisponível:", error.message);
+      }
+
+      return {
+        products: await fetchMercadoLivreOffers(),
+        sourceMode: "live-api"
+      };
     }
 
     function getConfiguredBackendUrl() {
       const urlParams = new URLSearchParams(window.location.search);
       return urlParams.get("api") || DATA_CONFIG.backendUrl;
+    }
+
+    function getConfiguredStaticJsonUrl() {
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get("json") || DATA_CONFIG.staticJsonUrl;
+    }
+
+    async function fetchStaticOffersJson() {
+      const staticJsonUrl = getConfiguredStaticJsonUrl();
+      if (!staticJsonUrl) {
+        return { products: [], sourceMode: "static-json" };
+      }
+
+      const url = new URL(staticJsonUrl, window.location.href);
+      url.searchParams.set("_", String(Date.now()));
+
+      const response = await fetch(url.toString(), {
+        cache: "no-store",
+        headers: { Accept: "application/json" }
+      });
+
+      if (!response.ok) {
+        throw new Error(`ofertas.json respondeu ${response.status}.`);
+      }
+
+      const data = await response.json();
+      const products = Array.isArray(data) ? data : data.products || data.ofertas || [];
+      return {
+        products,
+        sourceMode: "static-json",
+        generatedAt: data.generatedAt || data.atualizadoEm || data.updatedAt || "",
+        message: data.warning || data.message || "",
+        noticeType: data.warning ? "warning" : ""
+      };
     }
 
     async function fetchBackendOffers(backendUrl) {
@@ -1478,6 +1535,9 @@
       if (mode === "backend") {
         els.sourceBadge.classList.add("live");
         els.sourceBadge.textContent = "Fonte: backend seguro";
+      } else if (mode === "static-json") {
+        els.sourceBadge.classList.add("live");
+        els.sourceBadge.textContent = "Fonte: ofertas reais atualizadas";
       } else if (mode === "live-api") {
         els.sourceBadge.classList.add("live");
         els.sourceBadge.textContent = "Fonte: API Mercado Livre";
@@ -1497,12 +1557,13 @@
       els.notice.className = `notice ${message ? "visible" : ""} ${type}`.trim();
     }
 
-    function updateTimestamp() {
+    function updateTimestamp(timestamp) {
       const formatter = new Intl.DateTimeFormat("pt-BR", {
         dateStyle: "short",
         timeStyle: "short"
       });
-      els.updatedAt.textContent = `Última atualização: ${formatter.format(new Date())}`;
+      const date = timestamp ? new Date(timestamp) : new Date();
+      els.updatedAt.textContent = `Última atualização: ${formatter.format(Number.isNaN(date.getTime()) ? new Date() : date)}`;
     }
 
     function dedupeProducts(products) {

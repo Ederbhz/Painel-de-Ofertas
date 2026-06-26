@@ -1,0 +1,51 @@
+name: Atualizar ofertas
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 10,18 * * *"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/atualizar-ofertas.yml"
+      - "scripts/gerar-ofertas.mjs"
+      - "package.json"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: atualizar-ofertas
+  cancel-in-progress: true
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Gerar ofertas reais
+        env:
+          MELI_ACCESS_TOKEN: ${{ secrets.MELI_ACCESS_TOKEN }}
+          OFERTAS_LIMIT: "50"
+        run: node scripts/gerar-ofertas.mjs
+
+      - name: Publicar ofertas.json
+        run: |
+          if git diff --quiet -- ofertas.json; then
+            echo "ofertas.json sem alteracoes."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ofertas.json
+          git commit -m "Atualiza ofertas do dia"
+          git push

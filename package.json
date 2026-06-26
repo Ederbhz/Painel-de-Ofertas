@@ -1,0 +1,12 @@
+{
+  "name": "painel-de-ofertas",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "atualizar-ofertas": "node scripts/gerar-ofertas.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
