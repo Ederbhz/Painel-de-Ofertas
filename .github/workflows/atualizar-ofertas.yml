@@ -31,13 +31,28 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Verificar token Mercado Livre
+        id: token
+        env:
+          MELI_ACCESS_TOKEN: ${{ secrets.MELI_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$MELI_ACCESS_TOKEN" ]; then
+            echo "::warning title=MELI_ACCESS_TOKEN ausente::A API do Mercado Livre retornou 403 sem token. Cadastre o secret MELI_ACCESS_TOKEN para gerar ofertas reais."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
       - name: Gerar ofertas reais
+        if: steps.token.outputs.available == 'true'
         env:
           MELI_ACCESS_TOKEN: ${{ secrets.MELI_ACCESS_TOKEN }}
           OFERTAS_LIMIT: "50"
         run: node scripts/gerar-ofertas.mjs
 
       - name: Publicar ofertas.json
+        if: steps.token.outputs.available == 'true'
         run: |
           if git diff --quiet -- ofertas.json; then
             echo "ofertas.json sem alteracoes."
